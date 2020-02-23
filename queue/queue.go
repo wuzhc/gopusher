@@ -47,7 +47,7 @@ func (q *Queue) InitProducer() error {
 
 func (q *Queue) InitConsumer() error {
 	nsqCfg := nsq.NewConfig()
-	consumer, err := nsq.NewConsumer(config.Cfg.Topic, config.Cfg.ConsumerChannel, nsqCfg)
+	consumer, err := nsq.NewConsumer(config.Cfg.QueueTopic, config.Cfg.QueueChannel, nsqCfg)
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (q *Queue) InitConsumer() error {
 }
 
 func (q *Queue) Publish(msg []byte) error {
-	return q.Producer.obj.Publish(config.Cfg.Topic, msg)
+	return q.Producer.obj.Publish(config.Cfg.QueueTopic, msg)
 }
 
 func (q *Queue) Consume(fn nsq.HandlerFunc) {

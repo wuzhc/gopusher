@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"flag"
+	"fmt"
 	"github.com/etcd-io/etcd/clientv3"
 	"github.com/wuzhc/gopusher/config"
 	"github.com/wuzhc/gopusher/logger"
@@ -18,13 +18,9 @@ import (
 )
 
 var wg sync.WaitGroup
-var addr string
 var exitCh = make(chan struct{})
 
 func main() {
-	flag.StringVar(&addr, "addr", "127.0.0.1:8080", "socket server address")
-	flag.Parse()
-	
 	// Init config
 	if err := config.InitConfig("config.ini"); err != nil {
 		logger.Log().Fatalln(err)
@@ -99,7 +95,6 @@ func registerToEtcd() error {
 		return err
 	}
 
-	// 申请租约
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	resp, err := cli.Grant(ctx, 30)
 	cancel()
@@ -107,15 +102,15 @@ func registerToEtcd() error {
 		return err
 	}
 
-	// 为键赋值租约
+	listenKey := fmt.Sprintf("/gopusher/%s/%s", config.Cfg.EtcdListenKey, config.Cfg.GinServerAddr)
+	logger.Log().Println(listenKey)
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-	_, err = cli.Put(ctx, "/chat-nginx/socketserver/"+addr, addr+" weight=1", clientv3.WithLease(resp.ID))
+	_, err = cli.Put(ctx, listenKey, config.Cfg.GinServerAddr+" weight=1", clientv3.WithLease(resp.ID))
 	cancel()
 	if err != nil {
 		return err
 	}
 
-	// 不断续约
 	respCh, err := cli.KeepAlive(context.TODO(), resp.ID)
 	if err != nil {
 		return err
@@ -125,27 +120,26 @@ func registerToEtcd() error {
 		wg.Add(1)
 		for {
 			select {
-			case ka, ok := <-respCh:
+			case <-cli.Ctx().Done():
+				goto exit
+			case _, ok := <-respCh:
 				if !ok {
-					logger.Log().Println("keep alive channel closed.")
-					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					_, err := cli.Revoke(ctx, resp.ID)
-					cancel()
-					if err != nil {
-						logger.Log().Printf("etcd lease revoke failed, %s\n", err)
-						goto exit
-					} else {
-						logger.Log().Printf("etcd lease keep alive, ttl:%d", ka.TTL)
-					}
+					goto exit
 				}
 			case <-exitCh:
 				goto exit
 			}
 		}
 	exit:
-		logger.Log().Println("etcd lease keepalive exit.")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, err := cli.Revoke(ctx, resp.ID)
+		cancel()
+		if err != nil {
+			logger.Log().Errorln("etcd lease revoke failed, %s", err)
+		}
 		wg.Done()
 		_ = cli.Close()
+		logger.Log().Println("etcd lease keepalive exit.")
 	}()
 
 	return nil
