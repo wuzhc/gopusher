@@ -1,4 +1,4 @@
-## [中文说明](https://github.com/wuzhc/gopusher/blob/master/%E9%A1%B9%E7%9B%AE/%E6%8E%A8%E9%80%81%E7%B3%BB%E7%BB%9F2.0.md)
+## [中文说明](https://github.com/wuzhc/gopuser/blob/master/README-zh.md)
 
 > Gopusher can be used as the access layer of websocket connection, responsible for connection management and message push. You can use it in instant chat or message push system
 
