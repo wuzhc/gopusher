@@ -46,6 +46,12 @@ func (c *Client) listenEvent() {
 		"conn":   c.Conn.RemoteAddr().String(),
 	}
 
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Log().WithFields(fields).Errorln(err)
+		}
+	}()
+
 	for {
 		select {
 		case <-c.exitChan:

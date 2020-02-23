@@ -30,7 +30,7 @@ type Config struct {
 	ConsumerHandlerNum int
 
 	// etcd
-	EtcdServerAddr string
+	EtcdRegisteredAddr string
 	EtcdEnable     bool
 }
 
@@ -80,6 +80,10 @@ func (cfg *Config) loadFromFile(file string) error {
 	cfg.LogLevel, _ = c.Section("log").Key("level").Int()
 	cfg.LogReportCaller, _ = c.Section("log").Key("reportCaller").Bool()
 
+	// etcd
+	cfg.EtcdRegisteredAddr = c.Section("etcd").Key("registeredAddr").String()
+	cfg.EtcdEnable, _ = c.Section("etcd").Key("enable").Bool()
+
 	return nil
 }
 
@@ -115,8 +119,8 @@ func (cfg *Config) mergeDefaultSetting() {
 		cfg.GinServerAddr = "127.0.0.1:8080"
 	}
 
-	if len(cfg.EtcdServerAddr) == 0 {
-		cfg.GrpcServerAddr = "127.0.0.1:2379"
+	if len(cfg.EtcdRegisteredAddr) == 0 {
+		cfg.EtcdRegisteredAddr = "127.0.0.1:2379"
 	}
 }
 

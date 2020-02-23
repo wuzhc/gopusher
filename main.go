@@ -24,7 +24,7 @@ var exitCh = make(chan struct{})
 func main() {
 	flag.StringVar(&addr, "addr", "127.0.0.1:8080", "socket server address")
 	flag.Parse()
-
+	
 	// Init config
 	if err := config.InitConfig("config.ini"); err != nil {
 		logger.Log().Fatalln(err)
@@ -92,7 +92,7 @@ func main() {
 
 func registerToEtcd() error {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{config.Cfg.GrpcServerAddr},
+		Endpoints:   []string{config.Cfg.EtcdRegisteredAddr},
 		DialTimeout: 3 * time.Second,
 	})
 	if err != nil {

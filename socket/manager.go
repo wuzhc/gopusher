@@ -21,25 +21,24 @@ var Mg *Manager
 type Handler func(client *Client, message interface{}) error
 
 type Manager struct {
-	wg           WaitGroupWrapper
-	ctx          context.Context
-	groups       map[string]*Group // group has many client
-	clients      map[*Client]bool  // all client connection
-	registerCh   chan *Client
-	unregisterCh chan *Client
-	handlers     map[string]Handler
-	handlerMux   sync.RWMutex
-	joinGroupMux sync.RWMutex
-	exitChan     chan struct{}
+	wg            WaitGroupWrapper
+	ctx           context.Context
+	groups        sync.Map // map[string]*Group, group has many client
+	clients       sync.Map // map[*Client]bool, all client connection
+	registerCh    chan *Client
+	unregisterCh  chan *Client
+	handlers      map[string]Handler
+	handlerMux    sync.RWMutex
+	joinGroupMux  sync.Mutex
+	unRegisterMux sync.Mutex
+	exitChan      chan struct{}
 }
 
 func NewManager(ctx context.Context) (*Manager, error) {
 	Mg = &Manager{
 		ctx:          ctx,
-		clients:      make(map[*Client]bool),
 		registerCh:   make(chan *Client),
 		unregisterCh: make(chan *Client),
-		groups:       make(map[string]*Group),
 		handlers:     make(map[string]Handler),
 		exitChan:     make(chan struct{}),
 	}
@@ -70,14 +69,16 @@ func (m *Manager) RegisterDefaultHandler() {
 
 func (m *Manager) Exit() {
 	logger.Log().Println("wait for close all group.")
-	for _, g := range m.groups {
-		g.Close()
-	}
+	m.groups.Range(func(key, value interface{}) bool {
+		value.(*Group).Close()
+		return true
+	})
 
 	logger.Log().Println("wait for close all client.")
-	for c, _ := range m.clients {
-		c.manager.unregisterCh <- c
-	}
+	m.clients.Range(func(key, value interface{}) bool {
+		m.unregisterCh <- key.(*Client)
+		return true
+	})
 
 	close(m.exitChan)
 	m.wg.Wait()
@@ -101,23 +102,18 @@ func (m *Manager) EstablishWS(ctx *gin.Context) {
 }
 
 func (m *Manager) joinGroup(c *Client) error {
-	var grp *Group
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Log().WithFields(logrus.Fields{"mananer": "joinGroup"}).Errorln(err)
+		}
+	}()
 
-	m.joinGroupMux.Lock()
-
-	if _, ok := m.clients[c]; !ok {
+	if _, ok := m.clients.Load(c); !ok {
 		return errors.New("client isn't establish ws")
 	}
-	if _, ok := m.groups[c.CardID]; ok {
-		grp = m.groups[c.CardID]
-	} else {
-		grp = NewGroup(c.CardID, m)
-		m.groups[c.CardID] = grp
-	}
 
-	m.joinGroupMux.Unlock()
-
-	grp.Join(c)
+	value, _ := m.groups.LoadOrStore(c.CardID, NewGroup(c.CardID, m))
+	value.(*Group).Join(c)
 	return nil
 }
 
@@ -137,14 +133,14 @@ func (m *Manager) subscribeMq() {
 		}
 
 		for _, receiver := range msg.To {
-			grp, ok := m.groups[receiver]
+			v, ok := m.groups.Load(receiver)
 			if !ok {
 				continue
 			}
 			start := time.Now()
-			grp.SendJson(msg)
+			v.(*Group).SendJson(msg)
 			end := time.Now().Sub(start)
-			logger.Log().WithFields(logrus.Fields{"time": end.Seconds(), "clientNum": len(grp.clients)}).Println("const time.")
+			logger.Log().WithFields(logrus.Fields{"time": end.Seconds(), "clientNum": len(v.(*Group).clients)}).Println("const time.")
 		}
 
 		logger.Log().WithFields(logrus.Fields{"queue": "subscribe"}).Println(msg.Content)
@@ -159,58 +155,72 @@ func (m *Manager) manageClient() {
 			logger.Log().Println("exit manageClient")
 			return
 		case c := <-m.registerCh:
-			m.clients[c] = true
+			m.clients.Store(c, true)
 		case c := <-m.unregisterCh:
-			if _, ok := m.clients[c]; ok {
-				// Whether to remove group
-				group, ok := m.groups[c.CardID]
-				if ok {
-					for k, client := range group.clients {
-						if c != client { // Is it the current client
-							continue
-						}
-
-						connNum := len(group.clients)
-
-						// Remove client from group
-						if connNum > 0 {
-							if k == connNum-1 {
-								group.clients = group.clients[:k]
-							} else {
-								group.clients = append(group.clients[:k], group.clients[k+1:]...)
-							}
-						}
-
-						// It is the last client, remove group
-						if len(group.clients) == 0 {
-							group.Close()
-							delete(m.groups, c.CardID) // Remove group
-							logger.Log().WithFields(logrus.Fields{"group": c.CardID}).Debugln("group is removed")
-						}
-						break
-					}
-				}
-
-				logger.Log().WithFields(logrus.Fields{
-					"conn":   c.Conn.RemoteAddr(),
-					"cardID": c.CardID,
-					"appID":  c.AppID,
-				}).Debugln("client be removed.")
-
-				c.Close()
-				delete(m.clients, c)
-				c = nil
+			if _, ok := m.clients.Load(c); !ok {
+				continue
 			}
+
+			// Whether to remove group
+			if v, ok := m.groups.Load(c.CardID); ok {
+				group := v.(*Group)
+				for k, client := range group.clients {
+					if c != client { // Is it the current client
+						continue
+					}
+
+					connNum := len(group.clients)
+
+					// Remove client from group
+					if connNum > 0 {
+						if k == connNum-1 {
+							group.clients = group.clients[:k]
+						} else {
+							group.clients = append(group.clients[:k], group.clients[k+1:]...)
+						}
+					}
+
+					// It is the last client, remove group
+					if len(group.clients) == 0 {
+						group.Close()
+						m.groups.Delete(c.CardID) // Remove group
+						logger.Log().WithFields(logrus.Fields{"group": c.CardID}).Debugln("group is removed")
+					}
+					break
+				}
+			}
+
+			logger.Log().WithFields(logrus.Fields{
+				"conn":   c.Conn.RemoteAddr(),
+				"cardID": c.CardID,
+				"appID":  c.AppID,
+			}).Debugln("client be removed.")
+
+			c.Close()
+			m.clients.Delete(c)
+			c = nil
 		}
 	}
 }
 
 func (m *Manager) Stat() (int64, int64) {
-	return int64(len(m.clients)), int64(len(m.groups))
+	var groupNum int64
+	var clientNum int64
+
+	m.groups.Range(func(key, value interface{}) bool {
+		groupNum++
+		return true
+	})
+	m.clients.Range(func(key, value interface{}) bool {
+		clientNum++
+		return true
+	})
+
+	return clientNum, groupNum
 }
 
 func (m *Manager) IsOnline(cardID string) string {
-	if group, ok := m.groups[cardID]; ok && len(group.clients) > 0 {
+	if _, ok := m.groups.Load(cardID); ok {
 		return "yes"
 	} else {
 		return "no"
@@ -218,8 +228,8 @@ func (m *Manager) IsOnline(cardID string) string {
 }
 
 func (m *Manager) GetGroupClientNum(cardID string) int64 {
-	if group, ok := m.groups[cardID]; ok {
-		return int64(len(group.clients))
+	if v, ok := m.groups.Load(cardID); ok {
+		return int64(len(v.(*Group).clients))
 	} else {
 		return -1
 	}

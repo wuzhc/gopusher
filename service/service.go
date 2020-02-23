@@ -14,7 +14,7 @@ type ApiService struct {
 }
 
 // Push message
-// curl -X POST -k http://127.0.0.1:8081/push -d '{"from":"sss","to":["xxxx"], "content":"hellwo world"}'
+// curl -X POST -k http://127.0.0.1:8081/push -d '{"from":"sss","to":["wuzhc"], "content":"hellwo world"}'
 func (service ApiService) Push(ctx context.Context, in *pb.PushRequest) (*pb.PushReply, error) {
 	msg, err := proto.Marshal(in)
 	if err != nil {
