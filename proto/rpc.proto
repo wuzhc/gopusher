@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package proto;
+
+import "google/api/annotations.proto";
+
+service Rpc {
+    rpc Push (PushRequest) returns (PushReply) {
+        option (google.api.http) = {
+			post: "/push"
+			body: "*"
+		};
+    }
+
+    rpc System (SystemRequest) returns (SystemReply) {
+        option (google.api.http) = {
+			get: "/system"
+		};
+    }
+
+    rpc IsOnline (IsOnlineRequest) returns (IsOnlineReply) {
+        option (google.api.http) = {
+			get: "/isOnline"
+		};
+    }
+
+    rpc Group (GroupRequest) returns (GroupReply) {
+        option (google.api.http) = {
+			get: "/group"
+		};
+    }
+}
+
+message PushRequest {
+    string from = 1;
+    repeated string to = 2;
+    string appID = 3;
+    string content = 4;
+}
+
+message PushReply {
+    int32 code = 1;
+    string message = 2;
+}
+
+message SystemRequest {
+    string from = 1;
+}
+
+message SystemReply {
+    int64 cpuNum = 1;
+    int64 goroutineNum = 2;
+    int64 clientNum = 3;
+    int64 groupNum = 4;
+}
+
+message IsOnlineRequest {
+    string cardID = 1;
+}
+
+message IsOnlineReply {
+    string result = 1;
+}
+
+message GroupRequest {
+    string cardID = 1;
+}
+
+message GroupReply {
+    int64 clientNum = 1;
+}
